@@ -1,0 +1,418 @@
+{
+  "name": "AI Stock Market Research Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule_daily",
+      "name": "Schedule Daily at 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://www.reddit.com/r/IndianStockMarket/hot.json?limit=10",
+        "options": {}
+      },
+      "id": "reddit_fetch",
+      "name": "Fetch Reddit Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const posts = [];\nconst data = $input.first().json.data.children;\n\nfor (let item of data) {\n  const post = item.data;\n  posts.push({\n    title: post.title,\n    author: post.author,\n    score: post.score,\n    url: `https://reddit.com${post.permalink}`,\n    created: new Date(post.created_utc * 1000).toLocaleDateString('en-IN'),\n    selftext: post.selftext ? post.selftext.substring(0, 300) : '',\n    num_comments: post.num_comments\n  });\n}\n\nreturn posts.map(post => ({ json: post }));"
+      },
+      "id": "parse_reddit",
+      "name": "Parse Reddit Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything?q=Indian+stock+market&language=en&sortBy=publishedAt&pageSize=5&apiKey=YOUR_NEWSAPI_KEY",
+        "options": {}
+      },
+      "id": "news_fetch",
+      "name": "Fetch Stock News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = [];\nconst data = $input.first().json.articles || [];\n\nfor (let article of data) {\n  articles.push({\n    title: article.title,\n    description: article.description || '',\n    url: article.url,\n    source: article.source.name,\n    publishedAt: new Date(article.publishedAt).toLocaleDateString('en-IN'),\n    urlToImage: article.urlToImage || ''\n  });\n}\n\nreturn articles.map(article => ({ json: article }));"
+      },
+      "id": "parse_news",
+      "name": "Parse News Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 480]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "merge_data",
+      "name": "Merge All Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [900, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for AI analysis\nconst allData = $input.all();\nconst redditPosts = allData.filter(item => item.json.score !== undefined);\nconst newsArticles = allData.filter(item => item.json.source !== undefined);\n\nlet prompt = `Analyze the following Indian stock market content and provide key insights:\\n\\n`;\n\n// Add Reddit posts\nif (redditPosts.length > 0) {\n  prompt += `REDDIT DISCUSSIONS:\\n`;\n  redditPosts.forEach((post, index) => {\n    prompt += `${index + 1}. ${post.json.title}\\n`;\n    prompt += `   Upvotes: ${post.json.score} | Comments: ${post.json.num_comments}\\n`;\n    if (post.json.selftext) {\n      prompt += `   ${post.json.selftext.substring(0, 200)}\\n`;\n    }\n    prompt += `\\n`;\n  });\n}\n\n// Add news articles\nif (newsArticles.length > 0) {\n  prompt += `\\nLATEST NEWS:\\n`;\n  newsArticles.forEach((article, index) => {\n    prompt += `${index + 1}. ${article.json.title}\\n`;\n    prompt += `   Source: ${article.json.source}\\n`;\n    if (article.json.description) {\n      prompt += `   ${article.json.description}\\n`;\n    }\n    prompt += `\\n`;\n  });\n}\n\nprompt += `\\nProvide a brief analysis (3-4 key points) highlighting:\\n1. Main market trends\\n2. Important developments\\n3. Investor sentiment\\n4. Actionable insights`;\n\nreturn [{ json: { chatInput: prompt, originalData: allData } }];"
+      },
+      "id": "prepare_ai_prompt",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 380]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are an expert financial analyst specializing in Indian stock markets. Provide concise, actionable insights in 3-4 bullet points. Be specific and practical."
+        }
+      },
+      "id": "ai_agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [1260, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get AI insights from previous node\nconst aiInsights = $('AI Agent').first().json.output || 'AI analysis is being generated...';\n\n// Get original data\nconst allInputs = $('Merge All Data').all();\nconst redditPosts = allInputs.filter(item => item.json.score !== undefined);\nconst newsArticles = allInputs.filter(item => item.json.source !== undefined);\n\nconst today = new Date().toLocaleDateString('en-IN', { \n  weekday: 'long', \n  year: 'numeric', \n  month: 'long', \n  day: 'numeric' \n});\n\nlet html = `\n<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; }\n    .container { max-width: 650px; margin: 0 auto; background-color: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }\n    .header h1 { margin: 0; font-size: 28px; }\n    .date { color: #e0e7ff; font-size: 14px; margin-top: 5px; }\n    .content { padding: 30px; }\n    .section { margin-bottom: 30px; }\n    .section-title { color: #667eea; font-size: 20px; font-weight: bold; border-bottom: 2px solid #667eea; padding-bottom: 10px; margin-bottom: 15px; }\n    .post-item { background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; margin-bottom: 15px; border-radius: 5px; }\n    .post-title { font-weight: bold; color: #333; margin-bottom: 5px; font-size: 16px; }\n    .post-meta { color: #666; font-size: 12px; margin-bottom: 8px; }\n    .post-text { color: #555; font-size: 14px; line-height: 1.6; }\n    .news-item { margin-bottom: 20px; padding: 15px; background-color: #fff7ed; border-radius: 5px; }\n    .news-image { width: 100%; height: 200px; object-fit: cover; border-radius: 5px; margin-bottom: 10px; }\n    .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }\n    a { color: #667eea; text-decoration: none; }\n    a:hover { text-decoration: underline; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📈 Indian Stock Market Daily Brief</h1>\n      <div class=\"date\">${today}</div>\n    </div>\n    <div class=\"content\">\n`;\n\n// Reddit Section\nif (redditPosts.length > 0) {\n  html += `\n      <div class=\"section\">\n        <div class=\"section-title\">🔥 Trending on Reddit</div>\n`;\n  \n  redditPosts.slice(0, 5).forEach(post => {\n    html += `\n        <div class=\"post-item\">\n          <div class=\"post-title\"><a href=\"${post.json.url}\" target=\"_blank\">${post.json.title}</a></div>\n          <div class=\"post-meta\">👤 ${post.json.author} | ⬆️ ${post.json.score} upvotes | 💬 ${post.json.num_comments} comments</div>\n          ${post.json.selftext ? `<div class=\"post-text\">${post.json.selftext}...</div>` : ''}\n        </div>\n`;\n  });\n  \n  html += `\n      </div>\n`;\n}\n\n// News Section\nif (newsArticles.length > 0) {\n  html += `\n      <div class=\"section\">\n        <div class=\"section-title\">📰 Latest Market News</div>\n`;\n  \n  newsArticles.slice(0, 3).forEach(article => {\n    html += `\n        <div class=\"news-item\">\n          ${article.json.urlToImage ? `<img src=\"${article.json.urlToImage}\" class=\"news-image\" alt=\"News image\">` : ''}\n          <div class=\"post-title\"><a href=\"${article.json.url}\" target=\"_blank\">${article.json.title}</a></div>\n          <div class=\"post-meta\">📅 ${article.json.publishedAt} | 🏢 ${article.json.source}</div>\n          <div class=\"post-text\">${article.json.description}</div>\n        </div>\n`;\n  });\n  \n  html += `\n      </div>\n`;\n}\n\nhtml += `\n      <div class=\"section\">\n        <div class=\"section-title\">💡 AI Insights</div>\n        <div class=\"post-text\" style=\"background-color: #eff6ff; padding: 15px; border-radius: 5px; border-left: 4px solid #3b82f6;\">\n          <em>AI analysis will be generated here based on the collected data...</em>\n        </div>\n      </div>\n    </div>\n    <div class=\"footer\">\n      <p>This newsletter is generated automatically by AI Research Agent</p>\n      <p>© ${new Date().getFullYear()} Stock Market Daily Brief | Powered by N8n</p>\n    </div>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{ json: { html: html, date: today } }];"
+      },
+      "id": "create_newsletter",
+      "name": "Create Newsletter HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 380]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "read_subscribers",
+      "name": "Read Subscribers from Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [1640, 380],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "📈 Your Daily Indian Stock Market Brief - {{ $now.format('DD/MM/YYYY') }}",
+        "emailType": "html",
+        "message": "={{ $('Create Newsletter HTML').item.json.html }}",
+        "options": {}
+      },
+      "id": "send_gmail",
+      "name": "Send Newsletter via Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1860, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "YugaAIdemo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_id }}",
+        "text": "=📈 *Indian Stock Market Daily Brief*\n_{{ $now.format('DD MMMM YYYY') }}_\n\n*Today's Market Highlights:*\n\n🔥 *Trending Discussions*\nCheck out the top discussions on Reddit and market forums\n\n📰 *Latest News*\nMajor market updates and breaking news\n\n💡 *AI Insights*\nKey trends and analysis\n\n📧 Full detailed newsletter sent to your email!\n\n_Powered by AI Research Agent_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send_telegram",
+      "name": "Send Telegram Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1860, 480],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Yugandar_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "triggerOn": "specificSheet",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "event": "rowAdded"
+      },
+      "id": "new_subscriber_trigger",
+      "name": "New Subscriber Trigger",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [240, 700],
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "Welcome to Indian Stock Market Daily Brief! 🎉",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; }\n    .container { max-width: 600px; margin: 0 auto; background-color: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; text-align: center; }\n    .content { padding: 40px; }\n    .button { background-color: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 20px; }\n    .footer { background-color: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>🎉 Welcome Aboard!</h1>\n    </div>\n    <div class=\"content\">\n      <h2>Hi {{ $json.name || 'There' }}! 👋</h2>\n      <p>Thank you for subscribing to the <strong>Indian Stock Market Daily Brief</strong>!</p>\n      <p>You'll now receive:</p>\n      <ul>\n        <li>📊 Daily market trends and insights</li>\n        <li>🔥 Trending discussions from Reddit and forums</li>\n        <li>📰 Latest stock market news</li>\n        <li>💡 AI-powered analysis and recommendations</li>\n      </ul>\n      <p>Your first newsletter will arrive tomorrow morning at 9 AM IST. Get ready to stay ahead in the market!</p>\n      <p><strong>Email:</strong> {{ $json.email }}</p>\n      ${$json.telegram_id ? '<p><strong>Telegram:</strong> Connected ✅</p>' : ''}\n    </div>\n    <div class=\"footer\">\n      <p>© 2024 Stock Market Daily Brief | Powered by N8n & AI</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "welcome_email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [460, 700],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "YugaAIdemo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.telegram_id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "check_telegram",
+      "name": "Check if Telegram ID Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_id }}",
+        "text": "=🎉 *Welcome to Stock Market Daily Brief!*\n\nHi {{ $json.name || 'there' }}! 👋\n\nThanks for subscribing! You'll receive:\n\n📊 Daily market trends\n🔥 Trending discussions  \n📰 Latest news\n💡 AI insights\n\nYour first newsletter arrives tomorrow at 9 AM IST!\n\n_Powered by AI Research Agent_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "welcome_telegram",
+      "name": "Send Welcome Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [900, 640],
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Yugandar_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Daily at 9 AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reddit Posts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Stock News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Reddit Posts": {
+      "main": [
+        [
+          {
+            "node": "Parse Reddit Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reddit Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stock News": {
+      "main": [
+        [
+          {
+            "node": "Parse News Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse News Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge All Data": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Create Newsletter HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Newsletter HTML": {
+      "main": [
+        [
+          {
+            "node": "Read Subscribers from Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Subscribers from Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Send Newsletter via Gmail",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Subscriber Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Check if Telegram ID Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Telegram ID Exists": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
