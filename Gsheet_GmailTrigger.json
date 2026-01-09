@@ -1,0 +1,96 @@
+{
+  "name": "Daily Personalized Gmail Sender",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        }
+      },
+      "id": "ScheduleTrigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetId": "<YOUR_GOOGLE_SHEET_URL>",
+        "range": "Customer_List"
+      },
+      "id": "GoogleSheets",
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [480, 300],
+      "credentials": {
+        "googleApi": "Google Sheets Account"
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1
+      },
+      "id": "SplitInBatches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "to": "={{$json[\"Email\"]}}",
+        "subject": "Welcome, {{$json[\"Name\"]}}!",
+        "message": "<p>Hi {{$json[\"Name\"]}},</p><p>{{$json[\"Message\"]}}</p><p>Best regards,<br>Your Company Team</p>"
+      },
+      "id": "Gmail",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 4,
+      "position": [960, 300],
+      "credentials": {
+        "gmailOAuth2": "Gmail Account"
+      }
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "Wait10Sec",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Google Sheets", "type": "main", "index": 0 }]]
+    },
+    "Google Sheets": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [[{ "node": "Gmail", "type": "main", "index": 0 }]]
+    },
+    "Gmail": {
+      "main": [[{ "node": "Wait 10s", "type": "main", "index": 0 }]]
+    },
+    "Wait 10s": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 1 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "dailypersonalizedemail-v1"
+}
